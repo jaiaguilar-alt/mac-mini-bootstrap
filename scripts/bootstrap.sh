@@ -240,6 +240,17 @@ phase_6_claude_oauth() {
   local sentinel_begin="# >>> pax-bootstrap CLAUDE_CODE_OAUTH_TOKEN >>>"
   local sentinel_end="# <<< pax-bootstrap CLAUDE_CODE_OAUTH_TOKEN <<<"
 
+  # Preferred path: OP_SERVICE_ACCOUNT_TOKEN already exported in ~/.zshenv.
+  # In that mode `op read` authenticates against the Service Account and never
+  # prompts the desktop "Allow CLI access" dialog, so non-interactive shells
+  # (Claude Code Desktop Bash tool, etc.) can resolve the OAuth token cleanly.
+  # See pax-memory/reference/op-service-account-mode.md for the setup recipe.
+  if [ -f "$zshenv" ] && grep -qE '^[[:space:]]*export OP_SERVICE_ACCOUNT_TOKEN=' "$zshenv"; then
+    ok "OP_SERVICE_ACCOUNT_TOKEN already configured in ~/.zshenv — skipping desktop-integration loader"
+    note "If \`claude -p\` fails: confirm the SA token grants read access to Claude Code OAuth Token in $OP_VAULT"
+    return
+  fi
+
   # Migration: earlier versions of this script appended the loader to ~/.zshrc,
   # which is only sourced by interactive shells. Claude Code Desktop's Bash tool
   # spawns non-interactive zsh subshells that source ~/.zshenv instead, so they
