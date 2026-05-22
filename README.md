@@ -9,7 +9,7 @@ This replaces the Windows laptop's role per `pax-memory/projects/mac-mini-laptop
 1. Finish standard macOS setup (Apple ID, FileVault, name the machine `JaiMini` or similar).
 2. Install **1Password desktop app** from the App Store, sign in with the master password, and enable the **CLI integration** (Settings → Developer → "Integrate with 1Password CLI"). This is the gate everything else depends on — the bootstrap scripts read secrets from 1P.
 3. Install **Google Chrome**, sign in with `jai@flowautobody.com.au`. Chrome Sync brings bookmarks + extensions over automatically.
-4. Install **Google Drive Desktop**, sign in. `~/Google Drive/My Drive/Pax-Backups/` will sync down from the cloud — including the Windows-laptop parachute snapshot.
+4. Install **Google Drive Desktop**, sign in. `~/Google Drive/My Drive/Claude-AI Projects/` will sync down from the cloud — including the Windows-laptop parachute snapshot.
 5. Open a Terminal window and run:
 
    ```bash
