@@ -37,7 +37,7 @@ The script is idempotent — safe to re-run. It runs in clearly labeled phases.
 | 4 | `gh auth login` using GitHub PAT from 1P; optionally register the SSH key with GitHub |
 | 5 | Clone every `jaiaguilar-alt/*` repo into `~/projects/` (skips pax-memory + deprecated) + clone Flow-Media-Digital workflow-prototype + workflow-widget |
 | 5b | Clone `pax-memory` to `~/.openclaw/pax-memory/` (separate from working repos; required for hooks + memory continuity) |
-| 6 | Load Claude Code subscription OAuth token from 1P into `CLAUDE_CODE_OAUTH_TOKEN` env (appended to `~/.zshrc`) |
+| 6 | Load Claude Code subscription OAuth token from 1P into `CLAUDE_CODE_OAUTH_TOKEN` env (appended to `~/.zshenv` so non-interactive subshells — e.g. Claude Code Desktop's Bash tool — inherit it too). Migrates any prior `~/.zshrc` install. |
 | 7 | Install MCP server packages + write Mac-flavoured launchers in `~/.pax-mcp-launchers/` + `claude mcp add` for Notion, Xero, Slack, Drive |
 | 8 | Restore Drive OAuth keys from 1P (refresh tokens regen fresh via `mcp-server-gdrive auth`) |
 | 9 | Verify droplet reachable via SSH (`ssh pax-cloud-droplet echo ok`) |

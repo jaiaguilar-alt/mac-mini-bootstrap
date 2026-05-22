@@ -229,26 +229,53 @@ phase_5b_pax_memory() {
 }
 
 # ────────────────────────────────────────────────────────────────────
-# Phase 6: Claude Code OAuth token in ~/.zshrc
+# Phase 6: Claude Code OAuth token in ~/.zshenv
+# (must be .zshenv, not .zshrc — Claude Code Desktop's Bash tool spawns
+# non-interactive zsh subshells that source .zshenv only.)
 # ────────────────────────────────────────────────────────────────────
 phase_6_claude_oauth() {
-  log "Phase 6 — Claude Code subscription OAuth token"
+  log "Phase 6 — Claude Code subscription OAuth token (in ~/.zshenv)"
+  local zshenv="$HOME/.zshenv"
   local zshrc="$HOME/.zshrc"
-  touch "$zshrc"
-  if grep -q "CLAUDE_CODE_OAUTH_TOKEN" "$zshrc"; then
-    ok "CLAUDE_CODE_OAUTH_TOKEN already in ~/.zshrc"
-  else
-    cat >> "$zshrc" <<'EOF'
+  local sentinel_begin="# >>> pax-bootstrap CLAUDE_CODE_OAUTH_TOKEN >>>"
+  local sentinel_end="# <<< pax-bootstrap CLAUDE_CODE_OAUTH_TOKEN <<<"
 
-# Claude Code — subscription OAuth token loaded from 1P at shell start.
-# Token rotates yearly via `claude setup-token`.
-if command -v op >/dev/null 2>&1; then
-  export CLAUDE_CODE_OAUTH_TOKEN="$(op read 'op://pax-cloud-secrets/Claude Code OAuth Token/credential' 2>/dev/null)"
-fi
-EOF
-    ok "added CLAUDE_CODE_OAUTH_TOKEN loader to ~/.zshrc"
+  # Migration: earlier versions of this script appended the loader to ~/.zshrc,
+  # which is only sourced by interactive shells. Claude Code Desktop's Bash tool
+  # spawns non-interactive zsh subshells that source ~/.zshenv instead, so they
+  # missed the token and `claude -p` failed with "Not logged in". Strip the
+  # stale block from ~/.zshrc if present so it can be re-added to ~/.zshenv.
+  if [ -f "$zshrc" ] && grep -qE '^[[:space:]]*export CLAUDE_CODE_OAUTH_TOKEN=' "$zshrc"; then
+    note "migrating stale CLAUDE_CODE_OAUTH_TOKEN loader out of ~/.zshrc"
+    cp "$zshrc" "$zshrc.pre-zshenv-migration.bak"
+    awk '
+      /^# Claude Code — subscription OAuth token loaded from 1P at shell start\.$/ { skipping = 1; next }
+      skipping && /^fi$/ { skipping = 0; next }
+      skipping { next }
+      { print }
+    ' "$zshrc" > "$zshrc.tmp" && mv "$zshrc.tmp" "$zshrc"
+    ok "stripped stale loader from ~/.zshrc (backup at $zshrc.pre-zshenv-migration.bak)"
   fi
-  note "Source ~/.zshrc or restart terminal to pick up the new env var"
+
+  touch "$zshenv"
+  if grep -qF "$sentinel_begin" "$zshenv" || grep -qE '^[[:space:]]*export CLAUDE_CODE_OAUTH_TOKEN=' "$zshenv"; then
+    ok "CLAUDE_CODE_OAUTH_TOKEN loader already in ~/.zshenv"
+  else
+    cat >> "$zshenv" <<EOF
+
+$sentinel_begin
+# Claude Code — subscription OAuth token loaded from 1P at shell start.
+# In .zshenv (not .zshrc) so non-interactive subshells (e.g. spawned by
+# Claude Code Desktop's Bash tool) also pick it up.
+# Token rotates yearly via \`claude setup-token\`.
+if [[ -z "\$CLAUDE_CODE_OAUTH_TOKEN" ]] && command -v op >/dev/null 2>&1; then
+  export CLAUDE_CODE_OAUTH_TOKEN="\$(op read 'op://pax-cloud-secrets/Claude Code OAuth Token/credential' 2>/dev/null)"
+fi
+$sentinel_end
+EOF
+    ok "added CLAUDE_CODE_OAUTH_TOKEN loader to ~/.zshenv"
+  fi
+  note "Open a new terminal (or 'source ~/.zshenv') to pick up the env var"
 }
 
 # ────────────────────────────────────────────────────────────────────
