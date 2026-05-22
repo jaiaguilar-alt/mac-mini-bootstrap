@@ -279,7 +279,7 @@ $sentinel_begin
 # In .zshenv (not .zshrc) so non-interactive subshells (e.g. spawned by
 # Claude Code Desktop's Bash tool) also pick it up.
 # Token rotates yearly via \`claude setup-token\`.
-if [[ -z "\$CLAUDE_CODE_OAUTH_TOKEN" ]] && command -v op >/dev/null 2>&1; then
+if [[ -z "\${CLAUDE_CODE_OAUTH_TOKEN:-}" ]] && command -v op >/dev/null 2>&1; then
   export CLAUDE_CODE_OAUTH_TOKEN="\$(op read 'op://pax-cloud-secrets/Claude Code OAuth Token/credential' 2>/dev/null)"
 fi
 $sentinel_end
@@ -308,6 +308,11 @@ phase_7_mcps() {
     cat > "$mac_launcher_dir/$svc.sh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
+# Source ~/.zshenv to pick up OP_SERVICE_ACCOUNT_TOKEN — Claude Code Desktop is
+# a GUI app, so its children inherit launchd's env (not ~/.zshenv). Without this,
+# `op read` falls back to desktop integration and pops the Allow CLI dialog on
+# every MCP reconnect.
+[ -f "$HOME/.zshenv" ] && . "$HOME/.zshenv"
 EOF
   done
 
