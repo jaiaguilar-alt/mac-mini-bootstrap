@@ -16,6 +16,7 @@ GH_OWNER="jaiaguilar-alt"
 DROPLET_HOST="134.199.144.22"
 DROPLET_USER="pax"
 PROJECTS_DIR="$HOME/projects"
+PAX_MEMORY_DIR="$HOME/.openclaw/pax-memory"
 OP_VAULT="pax-cloud-secrets"
 SECRETS_REF_GITHUB_PAT="op://${OP_VAULT}/GitHub PAT - pax-cloud/credential"
 SECRETS_REF_CLAUDE_OAUTH="op://${OP_VAULT}/Claude Code OAuth Token/credential"
@@ -25,8 +26,12 @@ SECRETS_REF_XERO_CLIENT_SECRET="op://${OP_VAULT}/Xero Custom Connection - pax-cl
 SECRETS_REF_SLACK_TOKEN="op://${OP_VAULT}/Slack Bot Token - pax-cloud/credential"
 SECRETS_REF_SLACK_TEAM_ID="op://${OP_VAULT}/Slack Bot Token - pax-cloud/team_id"
 
-# Repos to clone — populated dynamically via `gh repo list`
-REPOS_TO_SKIP="pax-windows-tools-archive"  # space-separated; pre-existing deprecated
+# Repos to skip in the bulk clone (handled separately or deprecated)
+# pax-memory: cloned to ~/.openclaw/pax-memory in phase_5b instead of ~/projects/
+REPOS_TO_SKIP="pax-windows-tools-archive pax-memory"
+
+# Additional non-jaiaguilar-alt repos to clone
+EXTRA_REPOS="Flow-Media-Digital/workflow-prototype Flow-Media-Digital/workflow-widget"
 
 # ────────────────────────────────────────────────────────────────────
 # Helpers
@@ -143,7 +148,7 @@ EOF
     ok "added pax-cloud-droplet host alias"
   fi
 
-  note "GitHub public key (add via 'gh ssh-key add' in Phase 4 OR via GitHub UI):"
+  note "GitHub public key (registered with GitHub in Phase 4):"
   cat "$github_key.pub"
   note "Droplet public key — paste into pax@droplet's ~/.ssh/authorized_keys:"
   cat "$droplet_key.pub"
@@ -170,17 +175,17 @@ phase_4_gh_auth() {
 }
 
 # ────────────────────────────────────────────────────────────────────
-# Phase 5: Clone all jaiaguilar-alt repos
+# Phase 5: Clone all jaiaguilar-alt working repos to ~/projects/
 # ────────────────────────────────────────────────────────────────────
 phase_5_clone_repos() {
-  log "Phase 5 — clone all ${GH_OWNER}/* repos to ${PROJECTS_DIR}"
+  log "Phase 5 — clone all ${GH_OWNER}/* working repos to ${PROJECTS_DIR}"
   mkdir -p "$PROJECTS_DIR"
   gh repo list "$GH_OWNER" --limit 100 --json name -q '.[].name' | while read -r r; do
     skip=0
     for s in $REPOS_TO_SKIP; do
       [ "$r" = "$s" ] && skip=1
     done
-    [ $skip -eq 1 ] && { note "skip $r"; continue; }
+    [ $skip -eq 1 ] && { note "skip $r (handled separately or deprecated)"; continue; }
     if [ -d "$PROJECTS_DIR/$r" ]; then
       ok "$r already cloned"
     else
@@ -188,10 +193,43 @@ phase_5_clone_repos() {
       ok "cloned $r"
     fi
   done
+
+  log "Phase 5 cont. — clone extra repos (other orgs)"
+  for full_repo in $EXTRA_REPOS; do
+    name=$(basename "$full_repo")
+    if [ -d "$PROJECTS_DIR/$name" ]; then
+      ok "$name already cloned"
+    else
+      gh repo clone "$full_repo" "$PROJECTS_DIR/$name" >/dev/null 2>&1
+      ok "cloned $full_repo → $name"
+    fi
+  done
 }
 
 # ────────────────────────────────────────────────────────────────────
-# Phase 6: Claude Code OAuth token
+# Phase 5b: Clone pax-memory to ~/.openclaw/pax-memory (NOT ~/projects/)
+# ────────────────────────────────────────────────────────────────────
+phase_5b_pax_memory() {
+  log "Phase 5b — clone pax-memory to ${PAX_MEMORY_DIR}"
+  mkdir -p "$(dirname "$PAX_MEMORY_DIR")"
+  if [ -d "$PAX_MEMORY_DIR/.git" ]; then
+    ok "pax-memory already cloned at $PAX_MEMORY_DIR"
+    git -C "$PAX_MEMORY_DIR" pull --ff-only 2>&1 | tail -1
+  else
+    gh repo clone "${GH_OWNER}/pax-memory" "$PAX_MEMORY_DIR" >/dev/null 2>&1
+    ok "cloned pax-memory to $PAX_MEMORY_DIR"
+  fi
+
+  # Verify identity file exists
+  if [ -f "$PAX_MEMORY_DIR/identities/claudecode-macmini.md" ]; then
+    ok "claudecode-macmini identity present"
+  else
+    warn "identities/claudecode-macmini.md NOT in pax-memory yet — pull may be needed or file missing upstream"
+  fi
+}
+
+# ────────────────────────────────────────────────────────────────────
+# Phase 6: Claude Code OAuth token in ~/.zshrc
 # ────────────────────────────────────────────────────────────────────
 phase_6_claude_oauth() {
   log "Phase 6 — Claude Code subscription OAuth token"
@@ -224,19 +262,12 @@ phase_7_mcps() {
     ok "installed $pkg"
   done
 
-  local launcher_dir="$PROJECTS_DIR/pax-cloud/scripts/mcp-launchers"
-  if [ ! -d "$launcher_dir" ]; then
-    fail "Expected $launcher_dir to exist (cloned from pax-cloud repo). Re-run Phase 5."
-  fi
-
-  # The launchers reference /srv/pax/pax-cloud/.env for OP_SERVICE_ACCOUNT_TOKEN.
-  # On Mac Mini, op signin via desktop integration covers that automatically.
-  # We need Mac-friendly versions or wrapper that doesn't expect the droplet path.
+  # Mac-flavoured launchers — uses op via desktop 1P CLI integration, no /srv path
   local mac_launcher_dir="$HOME/.pax-mcp-launchers"
   mkdir -p "$mac_launcher_dir"
 
   for svc in notion xero slack; do
-    cat > "$mac_launcher_dir/$svc.sh" <<EOF
+    cat > "$mac_launcher_dir/$svc.sh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 EOF
@@ -282,17 +313,25 @@ EOF
 }
 
 # ────────────────────────────────────────────────────────────────────
-# Phase 8: Restore Google Drive OAuth keys from 1P
+# Phase 8: Drive OAuth keys (manual — keys exist in 1P; refresh tokens fresh on Mac)
 # ────────────────────────────────────────────────────────────────────
 phase_8_gdrive_auth() {
-  log "Phase 8 — restore Drive OAuth keys + cached credentials from 1P"
+  log "Phase 8 — Drive OAuth keys"
   mkdir -p "$HOME/.gdrive-auth"; chmod 700 "$HOME/.gdrive-auth"
 
   if [ -f "$HOME/.gdrive-auth/gcp-oauth.keys.json" ]; then
     ok "gcp-oauth.keys.json already present"
   else
-    note "Run 'op document get \"Google Drive OAuth Keys - pax-cloud\" --vault=${OP_VAULT} --output ~/.gdrive-auth/gcp-oauth.keys.json' manually if you want to restore — script doesn't do this automatically to avoid clobbering."
-    note "After the keys file is in place, run 'mcp-server-gdrive auth' to generate fresh credentials (will open browser)."
+    if op vault list >/dev/null 2>&1; then
+      op document get "Google Drive OAuth Keys - pax-cloud" --vault="${OP_VAULT}" --output "$HOME/.gdrive-auth/gcp-oauth.keys.json" 2>/dev/null && \
+        ok "restored gcp-oauth.keys.json from 1P" || \
+        warn "could not auto-restore Drive OAuth keys from 1P; restore manually if needed"
+    fi
+  fi
+
+  if [ ! -f "$HOME/.gdrive-auth/.gdrive-server-credentials.json" ]; then
+    note "Drive refresh tokens NOT restored (intentional — laptop refresh token was for the retired listener bot)."
+    note "Run 'mcp-server-gdrive auth' once to generate fresh credentials (will open browser)."
   fi
 }
 
@@ -305,9 +344,66 @@ phase_9_droplet() {
     ok "ssh pax-cloud-droplet works"
   else
     warn "Cannot SSH to droplet yet. Add the mac_mini_droplet public key to /home/pax/.ssh/authorized_keys on the droplet, then re-run."
-    note "Suggested: ssh-copy-id -i ~/.ssh/mac_mini_droplet.pub pax@${DROPLET_HOST}"
-    note "(May need to use an existing key as the initial proxy — e.g. via Tailscale or the DigitalOcean web console.)"
+    note "Suggested (run from a machine that already has droplet access):"
+    note "  ssh root@${DROPLET_HOST} \"echo '$(cat ~/.ssh/mac_mini_droplet.pub)' >> /home/pax/.ssh/authorized_keys\""
+    note "Or via DigitalOcean web console root access."
   fi
+}
+
+# ────────────────────────────────────────────────────────────────────
+# Phase 10: Configure ~/.claude/settings.json with SessionStart/Stop hooks
+# ────────────────────────────────────────────────────────────────────
+phase_10_claude_hooks() {
+  log "Phase 10 — Claude Code SessionStart/Stop hooks"
+  local settings="$HOME/.claude/settings.json"
+  mkdir -p "$(dirname "$settings")"
+
+  if [ -f "$settings" ] && grep -q "mac-mini-pull-on-start" "$settings"; then
+    ok "Mac Mini hooks already in $settings"
+    return
+  fi
+
+  if [ -f "$settings" ]; then
+    note "Backing up existing settings.json → settings.json.pre-mac-mini.bak"
+    cp "$settings" "$settings.pre-mac-mini.bak"
+  fi
+
+  cat > "$settings" <<EOF
+{
+  "permissions": {
+    "defaultMode": "bypassPermissions"
+  },
+  "theme": "dark",
+  "agentPushNotifEnabled": true,
+  "inputNeededNotifEnabled": true,
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \$HOME/.openclaw/pax-memory/scripts/mac-mini-pull-on-start.sh"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \$HOME/.openclaw/pax-memory/scripts/mac-mini-sync-on-stop.sh"
+          }
+        ]
+      }
+    ]
+  }
+}
+EOF
+  ok "wrote $settings with SessionStart + Stop hooks pointing at pax-memory scripts"
+  note "Verify in next Claude Code session: ~/.openclaw/pax-memory/agents/claudecode-macmini/sync.log should grow"
 }
 
 # ────────────────────────────────────────────────────────────────────
@@ -321,21 +417,27 @@ main() {
   phase_3_ssh_keys
   phase_4_gh_auth
   phase_5_clone_repos
+  phase_5b_pax_memory
   phase_6_claude_oauth
   phase_7_mcps
   phase_8_gdrive_auth
   phase_9_droplet
+  phase_10_claude_hooks
 
   log "Bootstrap complete"
   echo ""
-  echo "Next steps (you'll need to think about these):"
-  echo "  1. Decide whether to port the Telegram + Discord dispatch listeners."
-  echo "     If yes: cp launchd-plists/*.plist ~/Library/LaunchAgents/ && launchctl load -w ..."
-  echo "     If no:  retire and rely on droplet /ask."
+  echo "Next steps:"
+  echo "  1. Source your shell or open a new terminal: source ~/.zshrc"
+  echo "  2. Test: 'claude -p \"hello\"' should work under your subscription"
+  echo "  3. Test: 'ssh pax-cloud-droplet hostname' should return the droplet hostname"
+  echo "     If not, add ~/.ssh/mac_mini_droplet.pub to the droplet (see Phase 9 hint)"
+  echo "  4. Open Claude Code app, start a session — check ~/.openclaw/pax-memory/agents/claudecode-macmini/sync.log"
+  echo "     for a 'session start' entry confirming hooks fire"
+  echo "  5. Verify pax-memory updates from this machine push correctly:"
+  echo "       touch ~/.openclaw/pax-memory/agents/claudecode-macmini/last-seen.md"
+  echo "       cd ~/.openclaw/pax-memory && git diff && git add . && git commit -m 'test from mac-mini' && git push"
   echo ""
-  echo "  2. Once everything is green here, plan the Windows laptop reformat."
-  echo "     Don't reformat until 'claude -p hello' and 'ssh pax-cloud-droplet hostname'"
-  echo "     both work and your day-to-day workflow is happy on this machine."
+  echo "When everything is green and you've run on Mac Mini for ≥48h alongside the laptop, plan the Windows reformat."
 }
 
 main "$@"
